@@ -1,10 +1,14 @@
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request, status, HTTPException
 from math import floor
+import time
 
 app = FastAPI()
 
 token_buckets: dict[str, (int, datetime)] = {}
+fixed_window_dict: dict[str, (int, int)] = {}
+INTERVAL_SIZE_IN_SECONDS = 60
+THRESHOLD_PER_INTERVAL = 10
 BUCKET_SIZE = 10
 RATE_LIMIT = 1
 
@@ -59,6 +63,56 @@ async def limited_reqs(request: Request):
         return {
             "message": 'Success. Request was received!'
         } 
+
+@app.get("/fixed-window-counter")
+async def fixed_window(req:Request):
+    """
+    Choose an interval (1 second, 1 minute, 1 hour)
+    Keep track of the number of requests that have arrived within this interval using a counter
+    if the number of request exceed a set threshold, then throw away any extra requests after that interval
+    """
+    # grab the id for this request
+    id_for_request = floor(time.time() / INTERVAL_SIZE_IN_SECONDS)
+    # grab the ip address to use if this request is not yet added to the dict
+    ip_addr = req.client.host
+    # check if the ip address of this request exists in the dict
+    # means we have gotten requests from this ip before and it should be in the dict as a result
+    if ip_addr in fixed_window_dict:
+        # grab the current id and the number of requests in this interval and store their copies in variables
+        current_id: int = fixed_window_dict.get(ip_addr)[1]
+        current_num_of_requests: int = fixed_window_dict.get(ip_addr)[0]
+        # check if the current request has the same id (meaning it is still in the same interval)
+        # if yes, then increment the number of requests and keep the id same
+        if current_id == id_for_request:
+            if current_num_of_requests + 1 > THRESHOLD_PER_INTERVAL:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many requests received. Please try again later.",
+                    headers={"Retry-After": "60"}
+                )
+            current_num_of_requests +=1 
+            fixed_window_dict[ip_addr] = (current_num_of_requests, current_id)
+            return {
+                "message": "Request went through successfully!"
+            }
+       
+        # if not then reset the number of requests and assign it the new id
+        fixed_window_dict[ip_addr] = (0, id_for_request)
+        return {
+                "message": "Request went through successfully!"
+            }
+
+    # if the ip address is not added to the dictionary, then add it (this is a new request from a new ip address)
+    else:
+        fixed_window_dict[ip_addr] = (1, id_for_request)
+        return {
+            "message": "Request went through successfully!"
+        }
+         
+    
+
+
+
 
 
 
