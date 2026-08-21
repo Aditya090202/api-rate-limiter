@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from ipaddress import ip_address
 from fastapi import FastAPI, HTTPException, Request, status, HTTPException
 from math import floor
 import time
@@ -7,6 +8,8 @@ app = FastAPI()
 
 token_buckets: dict[str, (int, datetime)] = {}
 fixed_window_dict: dict[str, (int, int)] = {}
+sliding_window_log:dict[str, list[datetime]] = {}
+SLIDING_WINDOW_INTERVAL = 60 
 INTERVAL_SIZE_IN_SECONDS = 60
 THRESHOLD_PER_INTERVAL = 10
 BUCKET_SIZE = 10
@@ -110,6 +113,32 @@ async def fixed_window(req:Request):
         }
          
     
+@app.get("/sliding-window-log")
+async def sliding_window(req: Request):
+    ip_addr = req.client.host
+    if ip_addr in sliding_window_log:
+        timestamp_list = sliding_window_log[ip_addr]
+        # prune the old timestamps that are outside the now - N interval
+        while timestamp_list and timestamp_list[0] < datetime.now() - timedelta(seconds=INTERVAL_SIZE_IN_SECONDS):
+            timestamp_list.pop(0)
+        if len(timestamp_list) + 1 <= THRESHOLD_PER_INTERVAL:
+            timestamp_list.append(datetime.now())
+            sliding_window_log[ip_addr] = timestamp_list
+            return {"message": "Successful request"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests received. Please try again later.",
+                headers={"Retry-After": "60"}
+            )
+    else:
+        sliding_window_log[ip_addr] = [datetime.now()]
+        return {"message": "Request was successful!"}
+
+
+
+                    
+             
 
 
 
